@@ -44,15 +44,16 @@ func Start(client kubernetes.Interface, hzjclient hzjcs.Interface, namespace str
 	defer stop()
 	defer fmt.Println("Receive interrupt signal, stop controller, cleanup ...")
 
-	ctlr.Run(ctx)
+	sched := NewScheduler(ctlr, 3, false)
+	sched.Start(ctx)
 }
 
-func NewController(client kubernetes.Interface, hzjclient hzjcs.Interface, resourceType, crResourceType, namespace string) *Controller {
+func NewController(client kubernetes.Interface, hzjclient hzjcs.Interface, resourceType, customResourceType, namespace string) *Controller {
 	// TODO: Implement informers
 	return &Controller{}
 }
 
-func (c *Controller) Run(ctx context.Context) error {
+func (c *Controller) Run(ctx context.Context, workersPerCtlr int) error {
 	defer utilruntime.HandleCrash()
         //defer c.queue.ShutDown()
 

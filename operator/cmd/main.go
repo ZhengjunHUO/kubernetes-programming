@@ -33,6 +33,7 @@ func main() {
 		log.Fatalln(err)
 	}
 
+	// Get clientset for custome resources
 	hzjclientset, err := hzjcs.NewForConfig(config)
 	if err != nil {
 		log.Fatalln(err)
