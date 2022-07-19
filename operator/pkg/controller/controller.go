@@ -15,7 +15,7 @@ import (
 	k8sinformer "k8s.io/client-go/informers"
 	//"k8s.io/apimachinery/pkg/runtime"
 	//"k8s.io/apimachinery/pkg/watch"
-	//"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -24,6 +24,8 @@ import (
 	hzjinformer "github.com/ZhengjunHUO/k8s-custom-controller/pkg/client/informers/externalversions"
 	//hzjv1alpha1 "github.com/ZhengjunHUO/k8s-custom-controller/pkg/apis/huozj.io/v1alpha1"
 )
+
+const MAX_RETRY int = 3
 
 type Controller struct {
 	// clientset for built-in ressource
@@ -41,11 +43,11 @@ type Controller struct {
 
 // Sent to queue by informer if match the condition
 type Event struct {
-        key          string
+	key          string
 	// eg. create/update/delete
-        eventType    string
+	eventType    string
 	// eg. pod, job, fufu ...
-        resourceType string
+	resourceType string
 }
 
 func Start(client kubernetes.Interface, hzjclient hzjcs.Interface, namespace string) {
@@ -111,21 +113,22 @@ func NewController(client kubernetes.Interface, hzjclient hzjcs.Interface, resou
 
 func (c *Controller) Run(ctx context.Context, workersPerCtlr int) error {
 	defer utilruntime.HandleCrash()
-        defer c.queue.ShutDown()
+	defer c.queue.ShutDown()
 
 	log.Println("Starting controller ...")
 	// informers up
 	go c.informer.Run(ctx.Done())
-        go c.hzjinformer.Run(ctx.Done())
+	go c.hzjinformer.Run(ctx.Done())
 
 	if !cache.WaitForCacheSync(ctx.Done(), c.HasSynced) {
-                utilruntime.HandleError(fmt.Errorf("Waiting for caches to sync receive timeout!"))
-                return
-        }
+		err := fmt.Errorf("Waiting for caches to sync receive timeout!")
+		utilruntime.HandleError(err)
+		return err
+	}
 
 	// workers up
 	for i := 0; i < workersPerCtlr; i++ {
-		//go wait.Until(c.workerUp(ctx), time.Second, ctx.Done())
+		go wait.Until(func() { c.workerUp(ctx) }, time.Second, ctx.Done())
 	}
 
 	log.Println("Controller started")
@@ -139,4 +142,68 @@ func (c *Controller) Run(ctx context.Context, workersPerCtlr int) error {
 
 func (c *Controller) HasSynced() bool {
         return c.informer.HasSynced() && c.hzjinformer.HasSynced()
+}
+
+func (c *Controller) workerUp(ctx context.Context) {
+	for c.hasNext(ctx) {}
+}
+
+func (c *Controller) hasNext(ctx context.Context) bool {
+	item, shutdown := c.queue.Get()
+	if shutdown {
+		return false
+	}
+
+	defer c.queue.Done(item)
+	if err := c.Process(ctx, item.(Event)); err == nil {
+		// item processed ok
+		c.queue.Forget(item)
+	}else if c.queue.NumRequeues(item) < MAX_RETRY {
+		// Process failed, still able to retry, add it back to queue
+		log.Printf("[WARN] Failed to process %s: %v. Retrying ...\n", item.(Event).key, err)
+		c.queue.AddRateLimited(item)
+	}else{
+		// Process failed, no quota to retry, throw it away
+		log.Printf("[WARN] Failed to process %s: %v. No retry left, Abort !\n", item.(Event).key, err)
+		c.queue.Forget(item)
+		utilruntime.HandleError(err)
+	}
+
+	return true
+}
+
+func (c *Controller) Process(ctx context.Context, event Event) error {
+	var handler Handler
+	var item interface{}
+	var err error
+
+	if event.resourceType == "fufu" {
+		// send key in event to informer's indexer to retrieve item in shared cache 
+		item, _ , err = c.hzjinformer.GetIndexer().GetByKey(event.key)
+		if err != nil {
+			return fmt.Errorf("Unable to get object[key %s] from store: %v", event.key, err)
+		}
+
+		handler = &HzjHandler{}
+	}else{
+		// send key in event to informer's indexer to retrieve item in shared cache 
+		item, _ , err = c.informer.GetIndexer().GetByKey(event.key)
+		if err != nil {
+			return fmt.Errorf("Unable to get object[key %s] from store: %v", event.key, err)
+		}
+
+		handler = &DefaultHandler{}
+	}
+
+	// Call handler depends on the event type
+	switch event.eventType {
+	case "create":
+		handler.Created(ctx, item)
+	case "update":
+		handler.Updated(ctx, item)
+	case "delete":
+		handler.Deleted(ctx, item)
+	}
+
+	return nil
 }
