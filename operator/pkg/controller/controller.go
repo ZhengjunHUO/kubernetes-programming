@@ -42,7 +42,9 @@ type Controller struct {
 // Sent to queue by informer if match the condition
 type Event struct {
         key          string
+	// eg. create/update/delete
         eventType    string
+	// eg. pod, job, fufu ...
         resourceType string
 }
 
@@ -109,12 +111,32 @@ func NewController(client kubernetes.Interface, hzjclient hzjcs.Interface, resou
 
 func (c *Controller) Run(ctx context.Context, workersPerCtlr int) error {
 	defer utilruntime.HandleCrash()
-        //defer c.queue.ShutDown()
+        defer c.queue.ShutDown()
 
-	// TODO: Implement informers up
 	log.Println("Starting controller ...")
+	// informers up
+	go c.informer.Run(ctx.Done())
+        go c.hzjinformer.Run(ctx.Done())
+
+	if !cache.WaitForCacheSync(ctx.Done(), c.HasSynced) {
+                utilruntime.HandleError(fmt.Errorf("Waiting for caches to sync receive timeout!"))
+                return
+        }
+
+	// workers up
+	for i := 0; i < workersPerCtlr; i++ {
+		//go wait.Until(c.workerUp(ctx), time.Second, ctx.Done())
+	}
+
+	log.Println("Controller started")
+
+	// receive quit signal
 	<-ctx.Done()
 	log.Println("Stopping controller ...")
 
 	return nil
+}
+
+func (c *Controller) HasSynced() bool {
+        return c.informer.HasSynced() && c.hzjinformer.HasSynced()
 }
