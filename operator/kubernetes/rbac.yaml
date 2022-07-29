@@ -1,0 +1,39 @@
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: cr-custom-controller
+rules:
+- apiGroups: ["huozj.io"]
+  resources: ["fufus"]
+  verbs: ["get", "watch", "list"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "watch", "list", "create"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "watch", "list"]
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "watch", "list", "create", "update"]
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sa-custom-controller
+  namespace: controller
+
+---
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRoleBinding
+metadata:
+  name: crb-custom-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cr-custom-controller
+subjects:
+  - kind: ServiceAccount
+    name: sa-custom-controller
+    namespace: controller

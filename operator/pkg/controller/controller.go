@@ -57,7 +57,8 @@ func Start(client kubernetes.Interface, hzjclient hzjcs.Interface, namespace str
 	defer stop()
 	defer fmt.Println("Receive interrupt signal, stop controller, cleanup ...")
 
-	sched := NewScheduler(ctlr, 3, false)
+	// Working in HA mode
+	sched := NewScheduler(ctlr, 3, true)
 	sched.Start(ctx)
 }
 
